@@ -1,0 +1,289 @@
+import React, { useState, useEffect } from "react";
+import { CSVLink } from "react-csv";
+import * as XLSX from "xlsx";
+import { Link } from "react-router-dom";
+
+const Url = () => {
+  const [url, setUrl] = useState("");
+  const [data, setData] = useState(null);
+  const [localStorageData, setLocalStorageData] = useState({});
+  const [currentPage, setCurrentPage] = useState(1);
+  const [showTable, setShowTable] = useState(false);
+  const recordsPerPage = 50;
+
+  useEffect(() => {
+    retrieveDataFromLocalStorage();
+    console.log(data);
+  }, [url]);
+
+  const fetchData = async () => {
+    try {
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error("Network response was not ok");
+      }
+      const json = await response.json();
+      setData(json);
+      setShowTable(true);
+      updateLocalStorage(json);
+    } catch (error) {
+      console.error("Error fetching data:", error);
+    }
+  };
+
+  const retrieveDataFromLocalStorage = () => {
+    const storedData = localStorage.getItem("excelData");
+    if (storedData) {
+      const parsedData = JSON.parse(storedData);
+      setLocalStorageData(
+        parsedData.reduce((acc, curr) => {
+          acc[curr.Bib] = {
+            Mobile: curr.Mobile,
+            ChipTime: curr.ChipTime,
+          };
+          return acc;
+        }, {})
+      );
+    }
+  };
+
+  const updateLocalStorage = (apiData) => {
+    const storedData = localStorage.getItem("excelData");
+    if (storedData) {
+      const parsedData = JSON.parse(storedData);
+      const updatedData = parsedData.map((item) => {
+        const matchingItem = apiData.Results[0]?.Racers.find(
+          (racer) => racer.Bib === item.Bib
+        );
+        if (matchingItem && !localStorageData[item.Bib]?.ChipTime) {
+          // only update ChipTime if it doesn't already exist in local storage
+          localStorageData[item.Bib] = {
+            ...localStorageData[item.Bib],
+            ChipTime: matchingItem.ChipTime,
+            SMSSent: "No", // Set SMSSent to 'No' by default
+          };
+        }
+        if (matchingItem) {
+          // Update SMSSent to 'Yes' only if ChipTime has arrived
+          if (matchingItem.ChipTime) {
+            localStorageData[item.Bib].SMSSent = "Yes";
+          }
+          return {
+            ...item,
+            ChipTime: matchingItem.ChipTime,
+            SMSSent: localStorageData[item.Bib]?.SMSSent || "No", // Update SMSSent
+          };
+        }
+        return item;
+      });
+      localStorage.setItem("excelData", JSON.stringify(updatedData));
+      setLocalStorageData(
+        updatedData.reduce((acc, curr) => {
+          acc[curr.Bib] = {
+            Mobile: curr.Mobile,
+            ChipTime: curr.ChipTime,
+            ChipTimeReceived:
+              localStorageData[curr.Bib]?.ChipTimeReceived || "-",
+            SMSSent: localStorageData[curr.Bib]?.SMSSent || "-", // Update SMSSent in localStorageData
+          };
+          return acc;
+        }, {})
+      );
+    }
+  };
+
+  const handleFetchData = () => {
+    fetchData();
+  };
+
+  const handleNextPage = () => {
+    if (
+      currentPage < Math.ceil(data?.Results[0]?.Racers?.length / recordsPerPage)
+    ) {
+      setCurrentPage(currentPage + 1);
+    }
+  };
+
+  const handlePreviousPage = () => {
+    if (currentPage > 1) {
+      setCurrentPage(currentPage - 1);
+    }
+  };
+
+  const lastIndex = currentPage * recordsPerPage;
+  const firstIndex = lastIndex - recordsPerPage;
+  const currentRecords =
+    data?.Results[0]?.Racers?.slice(firstIndex, lastIndex) || [];
+
+  const csvData = currentRecords.map((item) => ({
+    Bib: item.Bib,
+    Name: item.Name,
+    ChipTime: item.ChipTime,
+    Mobile: localStorageData[item.Bib]
+      ? localStorageData[item.Bib].Mobile
+      : "-",
+  }));
+
+  const downloadExcel = () => {
+    const worksheet = XLSX.utils.json_to_sheet(csvData);
+    const workbook = { Sheets: { data: worksheet }, SheetNames: ["data"] };
+    const excelBuffer = XLSX.write(workbook, {
+      bookType: "xlsx",
+      type: "array",
+    });
+    const excelData = new Blob([excelBuffer], {
+      type: "application/octet-stream",
+    });
+    const link = document.createElement("a");
+    link.href = window.URL.createObjectURL(excelData);
+    link.download = "racers_data.xlsx";
+    link.click();
+  };
+
+  return (
+    <div className="mt-12">
+      <form className="flex justify-center max-w-sm mx-auto">
+        {!showTable && (
+          <Link
+            to="/"
+            type="button"
+            id="linky"
+            className="focus:outline-none text-grey-400 bg-yellow-400 hover:bg-yellow-500 focus:ring-4 focus:ring-yellow-300 font-medium rounded-lg text-sm h-10 px-6 py-2.5 mt-2 me-2 mb-2 ml-10 dark:focus:ring-yellow-900"
+          >
+            Back
+          </Link>
+        )}
+        <div className="relative w-full">
+          <input
+            type="text"
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            placeholder="Enter API URL"
+            className="bg-gray-50 border w-64 border-gray-300 text-white text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block ps-10 p-2.5 dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400 dark:text-white dark:focus:ring-blue-500 ml-2.5 mr-2 dark:focus:border-blue-500 mt-1.5"
+            required
+          />
+        </div>
+        <div>
+          <button
+            type="button"
+            className="text-white w-48 bg-gradient-to-br from-purple-600 to-blue-500 hover:bg-gradient-to-bl focus:ring-4 focus:outline-none focus:ring-blue-300 dark:focus:ring-blue-800 font-medium rounded-lg text-sm px-5 py-2.5 text-center mb-2 ml-3 mt-2 h-10.5"
+            onClick={handleFetchData}
+          >
+            Fetch Data
+          </button>
+        </div>
+      </form>
+      {showTable && (
+        <>
+          <div className="mt-8 flex justify-center">
+            {currentRecords.length > 0 && (
+              <table className="border-collapse border w-5/12	">
+                <thead>
+                  <tr>
+                    <th className="border border-gray-400 px-4 py-2 bg-gray-200">
+                      Bib
+                    </th>
+                    <th className="border border-gray-400 px-4 py-2 bg-gray-200">
+                      Name
+                    </th>
+                    <th className="border border-gray-400 px-4 py-2 bg-gray-200">
+                      Timing
+                    </th>
+                    <th className="border border-gray-400 px-4 py-2 bg-gray-200">
+                      Mobile
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {currentRecords.map((item, index) => (
+                    <tr key={index} className="border border-gray-400">
+                      <td className="border text-white text-center border-gray-400 px-4 py-2">
+                        {item.Bib}
+                      </td>
+                      <td className="border text-white text-center border-gray-400 px-4 py-2">
+                        {item.Name}
+                      </td>
+                      <td className="border text-white text-center border-gray-400 px-4 py-2">
+                        {item.ChipTime}
+                      </td>
+                      <td className="border text-white text-center border-gray-400 px-4 py-2">
+                        {localStorageData[item.Bib] &&
+                        localStorageData[item.Bib].Mobile
+                          ? localStorageData[item.Bib].Mobile
+                          : "-"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+          <div className="flex justify-center mt-6">
+            <Link
+              to="/"
+              type="button"
+              className="focus:outline-none text-grey-400 bg-yellow-400 hover:bg-yellow-500 focus:ring-4 focus:ring-yellow-300 font-medium rounded-lg text-sm px-6 py-1.5 me-8 mb-2 h-8 dark:focus:ring-yellow-900"
+            >
+              Back
+            </Link>
+            <button
+              className="flex items-center justify-start px-3 h-8 me-3 text-sm font-medium text-gray-500 bg-white border border-gray-300 rounded-lg hover:bg-gray-100 hover:text-gray-700 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-white"
+              onClick={handlePreviousPage}
+              disabled={currentPage === 1}
+            >
+              <svg
+                class="w-3.5 h-3.5 me-2 rtl:rotate-180"
+                aria-hidden="true"
+                xmlns="http://www.w3.org/2000/svg"
+                fill="none"
+                viewBox="0 0 14 10"
+              >
+                <path
+                  stroke="currentColor"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M13 5H1m0 0 4 4M1 5l4-4"
+                />
+              </svg>
+              Previous
+            </button>
+            <button
+              className="flex items-center justify-start px-3 h-8 ms-3 text-sm font-medium text-gray-500 bg-white border border-gray-300 rounded-lg hover:bg-gray-100 hover:text-gray-700 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-white"
+              onClick={handleNextPage}
+              disabled={
+                currentPage ===
+                Math.ceil(data?.Results[0]?.Racers?.length / recordsPerPage)
+              }
+            >
+              Next
+              <svg
+                class="w-3.5 h-3.5 ms-2 rtl:rotate-180"
+                aria-hidden="true"
+                xmlns="http://www.w3.org/2000/svg"
+                fill="none"
+                viewBox="0 0 14 10"
+              >
+                <path
+                  stroke="currentColor"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M1 5h12m0 0L9 1m4 4L9 9"
+                />
+              </svg>
+            </button>
+            <button
+              className="text-white bg-gradient-to-r from-purple-500 to-pink-500 hover:bg-gradient-to-l focus:ring-4 focus:outline-none focus:ring-purple-200 dark:focus:ring-purple-800 font-medium rounded-lg text-sm px-5 h-8  text-center me-2 mb-2 ml-8"
+              onClick={downloadExcel}
+            >
+              Export to Excel
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+};
+
+export default Url;
